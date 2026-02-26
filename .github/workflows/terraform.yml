@@ -42,23 +42,6 @@ jobs:
         if: github.event.inputs.action == 'plan'
         run: terraform plan
 
-      - name: Import existing resources if they exist
-        run: |
-         echo "Trying to import existing resources..."
-
-          # Import RDS Subnet Group (if exists)
-           terraform import module.rds.aws_db_subnet_group.strapi_db_subnet_group aman-db-subnet-group || true
-
-          # Import ALB Security Group (replace with real SG ID if needed)
-          SG_ID=$(aws ec2 describe-security-groups \
-          --filters Name=group-name,Values=alb-sg Name=vpc-id,Values=vpc-0778ad9a2069279fc \
-          --query "SecurityGroups[0].GroupId" \
-          --output text 2>/dev/null)
-
-           if [ "$SG_ID" != "None" ] && [ -n "$SG_ID" ]; then
-           terraform import module.security.aws_security_group.alb_sg $SG_ID || true
-          fi
-
       - name: Terraform Apply
         if: github.event.inputs.action == 'apply'
         run: terraform apply -auto-approve
