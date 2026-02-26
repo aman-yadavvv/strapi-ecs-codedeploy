@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       confirm:
-        description: "Type 'DESTROY' to permanently delete infrastructure"
+        description: "Type DESTROY to delete all Terraform-managed infrastructure"
         required: true
 
 env:
