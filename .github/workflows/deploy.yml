@@ -1,11 +1,12 @@
 name: Deploy Application
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - "app/**"
+  workflow_dispatch:
+    inputs:
+      confirm_deploy:
+        description: "Type YES to confirm deployment"
+        required: true
+        default: "NO"
 
 env:
   AWS_REGION: us-east-1
@@ -21,6 +22,13 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Validate Confirmation
+        run: |
+          if [ "${{ github.event.inputs.confirm_deploy }}" != "YES" ]; then
+            echo "❌ Deployment cancelled. You must type YES."
+            exit 1
+          fi
+
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -45,29 +53,32 @@ jobs:
 
       - name: Get current task definition ARN
         run: |
-         TASK_DEF_ARN=$(aws ecs describe-services \
-         --cluster $ECS_CLUSTER \
-         --services $ECS_SERVICE \
-         --query 'services[0].taskDefinition' \
-         --output text)
+          TASK_DEF_ARN=$(aws ecs describe-services \
+            --cluster $ECS_CLUSTER \
+            --services $ECS_SERVICE \
+            --query 'services[0].taskDefinition' \
+            --output text)
 
-         echo "TASK_DEF_ARN=$TASK_DEF_ARN" >> $GITHUB_ENV
+          echo "TASK_DEF_ARN=$TASK_DEF_ARN" >> $GITHUB_ENV
 
       - name: Download current task definition JSON
         run: |
-            aws ecs describe-task-definition \
+          aws ecs describe-task-definition \
             --task-definition $TASK_DEF_ARN \
             --query 'taskDefinition' > task-def.json
-          
+
       - name: Create new task definition revision
         run: |
+          sudo apt-get update && sudo apt-get install -y jq
+
           jq --arg IMAGE "$IMAGE_URI" \
-            --arg NAME "$CONTAINER_NAME" \
-            '.containerDefinitions |= map(
-              if .name == $NAME then .image = $IMAGE else . end
-            ) 
-            | del(.taskDefinitionArn,.revision,.status,.requiresAttributes,.compatibilities,.registeredAt,.registeredBy)' \
-            task-def.json > new-task-def.json
+             --arg NAME "$CONTAINER_NAME" \
+             '.containerDefinitions |= map(
+               if .name == $NAME then .image = $IMAGE else . end
+             )
+             | del(.taskDefinitionArn,.revision,.status,.requiresAttributes,
+                   .compatibilities,.registeredAt,.registeredBy)' \
+             task-def.json > new-task-def.json
 
           NEW_TASK_DEF_ARN=$(aws ecs register-task-definition \
             --cli-input-json file://new-task-def.json \
@@ -76,9 +87,9 @@ jobs:
 
           echo "NEW_TASK_DEF_ARN=$NEW_TASK_DEF_ARN" >> $GITHUB_ENV
 
-      - name: Generate AppSpec dynamically
+      - name: Generate AppSpec file
         run: |
-          cat <<EOF > appspec-temp.json
+          cat <<EOF > appspec.json
           {
             "version": 1,
             "Resources": [
@@ -99,14 +110,15 @@ jobs:
           EOF
 
       - name: Trigger CodeDeploy deployment
-        id: deploy
         run: |
           DEPLOYMENT_ID=$(aws deploy create-deployment \
             --application-name $CODEDEPLOY_APP \
             --deployment-group-name $CODEDEPLOY_GROUP \
-            --revision revisionType=AppSpecContent,appSpecContent="{\"content\":\"$(cat appspec-temp.json | sed 's/\"/\\\"/g')\"}" \
-            --query deploymentId --output text)
+            --revision file://appspec.json \
+            --query deploymentId \
+            --output text)
 
+          echo "Deployment started with ID: $DEPLOYMENT_ID"
           echo "DEPLOYMENT_ID=$DEPLOYMENT_ID" >> $GITHUB_ENV
 
       - name: Wait for deployment to finish
