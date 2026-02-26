@@ -11,7 +11,7 @@ env:
   AWS_REGION: us-east-1
   ECR_REPOSITORY: aman-app
   ECS_CLUSTER: aman-app-cluster
-  ECS_SERVICE: aman-app-task
+  ECS_SERVICE: aman-app-service
   CODEDEPLOY_APP: strapi-codedeploy-app
   CODEDEPLOY_GROUP: strapi-deployment-group
   CONTAINER_NAME: aman-container
@@ -43,12 +43,22 @@ jobs:
           docker push $IMAGE_URI
           echo "IMAGE_URI=$IMAGE_URI" >> $GITHUB_ENV
 
-      - name: Download current task definition
+      - name: Get current task definition ARN
         run: |
-          aws ecs describe-task-definition \
-            --task-definition $ECS_SERVICE \
-            --query taskDefinition > task-def.json
+         TASK_DEF_ARN=$(aws ecs describe-services \
+         --cluster $ECS_CLUSTER \
+         --services $ECS_SERVICE \
+         --query 'services[0].taskDefinition' \
+         --output text)
 
+         echo "TASK_DEF_ARN=$TASK_DEF_ARN" >> $GITHUB_ENV
+
+      - name: Download current task definition JSON
+        run: |
+            aws ecs describe-task-definition \
+            --task-definition $TASK_DEF_ARN \
+            --query 'taskDefinition' > task-def.json
+          
       - name: Create new task definition revision
         run: |
           jq --arg IMAGE "$IMAGE_URI" \
