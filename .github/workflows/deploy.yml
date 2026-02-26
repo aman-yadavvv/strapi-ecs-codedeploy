@@ -6,7 +6,7 @@ on:
       confirm_deploy:
         description: "Type YES to confirm deployment"
         required: true
-        default: "NO"
+        default: "YES"
 
 env:
   AWS_REGION: us-east-1
@@ -25,7 +25,7 @@ jobs:
       - name: Validate Confirmation
         run: |
           if [ "${{ github.event.inputs.confirm_deploy }}" != "YES" ]; then
-            echo "❌ Deployment cancelled. You must type YES."
+            echo "❌ Deployment cancelled. Type YES to proceed."
             exit 1
           fi
 
@@ -61,32 +61,33 @@ jobs:
 
           echo "TASK_DEF_ARN=$TASK_DEF_ARN" >> $GITHUB_ENV
 
-      - name: Download current task definition JSON
+      - name: Download current task definition
         run: |
           aws ecs describe-task-definition \
             --task-definition $TASK_DEF_ARN \
             --query 'taskDefinition' > task-def.json
 
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+
       - name: Create new task definition revision
         run: |
-          sudo apt-get update && sudo apt-get install -y jq
-
           jq --arg IMAGE "$IMAGE_URI" \
-            --arg NAME "$CONTAINER_NAME" \
-             '.containerDefinitions |= map(
-             if .name == $NAME then .image = $IMAGE else . end
-             )
-              | del(
-              .taskDefinitionArn,
-              .revision,
-              .status,
-               .requiresAttributes,
-              .compatibilities,
-               .registeredAt,
-               .registeredBy,
-               .deregisteredAt
-             )' \
-          task-def.json > new-task-def.json
+             --arg NAME "$CONTAINER_NAME" \
+             '{
+                family,
+                taskRoleArn,
+                executionRoleArn,
+                networkMode,
+                containerDefinitions: (.containerDefinitions | map(
+                  if .name == $NAME then .image = $IMAGE else . end
+                )),
+                volumes,
+                requiresCompatibilities,
+                cpu,
+                memory
+              }' \
+             task-def.json > new-task-def.json
 
           NEW_TASK_DEF_ARN=$(aws ecs register-task-definition \
             --cli-input-json file://new-task-def.json \
@@ -95,44 +96,41 @@ jobs:
 
           echo "NEW_TASK_DEF_ARN=$NEW_TASK_DEF_ARN" >> $GITHUB_ENV
 
-      - name: Generate AppSpec file
+      - name: Update appspec.json with new task definition
         run: |
-          cat <<EOF > appspec.json
+          jq --arg TASK_DEF "$NEW_TASK_DEF_ARN" \
+             '.Resources[0].TargetService.Properties.TaskDefinition = $TASK_DEF' \
+             appspec.json > appspec-final.json
+
+      - name: Create revision.json
+        run: |
+          jq -c . appspec-final.json > appspec-compact.json
+
+          cat <<EOF > revision.json
           {
-            "version": 1,
-            "Resources": [
-              {
-                "TargetService": {
-                  "Type": "AWS::ECS::Service",
-                  "Properties": {
-                    "TaskDefinition": "$NEW_TASK_DEF_ARN",
-                    "LoadBalancerInfo": {
-                      "ContainerName": "$CONTAINER_NAME",
-                      "ContainerPort": 1337
-                    }
-                  }
-                }
-              }
-            ]
+            "revisionType": "AppSpecContent",
+            "appSpecContent": {
+              "content": $(cat appspec-compact.json)
+            }
           }
           EOF
 
       - name: Trigger CodeDeploy deployment
         run: |
-         DEPLOYMENT_ID=$(aws deploy create-deployment \
-         --application-name $CODEDEPLOY_APP \
-         --deployment-group-name $CODEDEPLOY_GROUP \
-          --revision revisionType=AppSpecContent,appSpecContent="{content=$(cat appspec.json | jq -c .)}" \
-         --query deploymentId \
-         --output text)
+          DEPLOYMENT_ID=$(aws deploy create-deployment \
+            --application-name $CODEDEPLOY_APP \
+            --deployment-group-name $CODEDEPLOY_GROUP \
+            --revision file://revision.json \
+            --query deploymentId \
+            --output text)
 
-         echo "Deployment started with ID: $DEPLOYMENT_ID"
-         echo "DEPLOYMENT_ID=$DEPLOYMENT_ID" >> $GITHUB_ENV
-  
+          echo "Deployment started with ID: $DEPLOYMENT_ID"
+          echo "DEPLOYMENT_ID=$DEPLOYMENT_ID" >> $GITHUB_ENV
+
       - name: Wait for deployment to finish
         run: |
           aws deploy wait deployment-successful \
             --deployment-id $DEPLOYMENT_ID
 
       - name: Deployment successful
-        run: echo "Blue/Green deployment completed successfully 🚀"
+        run: echo "🚀 Blue/Green deployment completed successfully!"
