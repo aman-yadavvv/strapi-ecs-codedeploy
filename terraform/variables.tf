@@ -45,7 +45,7 @@ variable "db_password" {
 variable "app_image" {
   description = "The Docker image for the application."
   type        = string
-  default     = "811738710312.dkr.ecr.us-east-1.amazonaws.com/aman-strapi-app:latest"
+  default     = "811738710312.dkr.ecr.us-east-1.amazonaws.com/aman-app:ef0dbd7561f9fc3d87c256a3079af801c639dbcb"
 }
 
 variable "execution_role_arn" {
