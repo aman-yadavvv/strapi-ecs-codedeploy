@@ -1,14 +1,12 @@
 name: Terraform Infrastructure
 
 on:
-  pull_request:
-    paths:
-      - "terraform/**"
-  push:
-    branches:
-      - main
-    paths:
-      - "terraform/**"
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "Choose terraform action: plan or apply"
+        required: true
+        default: "plan"
 
 env:
   AWS_REGION: us-east-1
@@ -41,9 +39,9 @@ jobs:
         run: terraform validate
 
       - name: Terraform Plan
-        if: github.event_name == 'pull_request'
+        if: github.event.inputs.action == 'plan'
         run: terraform plan
 
       - name: Terraform Apply
-        if: github.event_name == 'push'
+        if: github.event.inputs.action == 'apply'
         run: terraform apply -auto-approve
