@@ -1,12 +1,12 @@
 name: Deploy Application
 
+
 on:
-  workflow_dispatch:
-    inputs:
-      confirm_deploy:
-        description: "Type YES to confirm deployment"
-        required: true
-        default: "YES"
+  push:
+    branches:
+      - main
+    paths:
+      - "app/**"
 
 env:
   AWS_REGION: us-east-1
